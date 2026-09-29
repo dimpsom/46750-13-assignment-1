@@ -35,6 +35,9 @@ def run_base_case(question: str, out: Path, show: bool) -> Results | None:
         return None
 
     print(results, "\n")
+    print(f"utility:          {results.meta['utility']:.2f} DKK")
+    print(f"procurement cost: {results.meta['procurement_cost']:.2f} DKK")
+    print(f"net utility:      {results.meta['net_utility']:.2f} DKK")
     results.save(out)
     plot_schedule(results, data, save_to=out / "schedule.png")
     plot_duals(results, data, save_to=out / "duals.png")

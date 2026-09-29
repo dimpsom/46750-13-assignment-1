@@ -90,7 +90,6 @@ class FlexibleConsumerModel:
         that ``solve()`` can return the primal and dual values automatically.
         """
         d, m, T = self.data, self.m, self.T
-
         # --- Decision variables --------------------------------------------------------
         # TODO: identify and declare the decision variables of your formulation.
         # Store every variable family in self.var["<name>"]: solve() then returns its hourly
@@ -108,11 +107,55 @@ class FlexibleConsumerModel:
         #   a bound you want a dual for must be an explicit constraint, not lb=/ub= (see the README).
         # * naming the families "import", "export", "load", "pv" makes the standard plots of
         #   src/plotting.py work out of the box.
+        
+        # Effective grid prices
+        p_import = d.energy_price + d.import_tariff
+        p_export = d.energy_price - d.export_tariff
+
+        # Question 1 must have a consumption utility
+        if d.consumption_utility is None:
+            raise ValueError("Question 1 requires consumption_utility.")
+
+        # --- Decision variables ------------------------------------------------
+        self.var["import"] = m.addVars(
+        T, lb=0.0, vtype=GRB.CONTINUOUS, name="import"
+        )
+
+        self.var["export"] = m.addVars(
+        T, lb=0.0, vtype=GRB.CONTINUOUS, name="export"
+        )
+
+        # Bounds are imposed explicitly below so their duals can be extracted
+        self.var["load"] = m.addVars(
+        T, lb=-GRB.INFINITY, vtype=GRB.CONTINUOUS, name="load"
+        )
+
+        self.var["pv"] = m.addVars(
+        T, lb=-GRB.INFINITY, vtype=GRB.CONTINUOUS, name="pv"
+        )
+
+        imp = self.var["import"]
+        exp = self.var["export"]
+        load = self.var["load"]
+        pv = self.var["pv"]
+        
 
         # --- Objective ---------------------------------------------------------------
         # TODO: express the objective function and its direction (GRB.MINIMIZE or GRB.MAXIMIZE):
         #   m.setObjective(gp.quicksum(<expression in t> for t in T), <direction>)
         # The input-data attributes (with units) are documented in src/data_loader.py (InputData).
+        
+        m.setObjective(
+            gp.quicksum(
+                d.consumption_utility * load[t]
+                + p_export[t] * exp[t]
+                - p_import[t] * imp[t]
+                - d.pv_marginal_cost * pv[t]
+                for t in T
+            ),
+            GRB.MAXIMIZE,
+        )
+
 
         # --- Constraints -------------------------------------------------------------
         # TODO: add the constraints of your formulation.
@@ -122,6 +165,36 @@ class FlexibleConsumerModel:
         #       (<lhs expression> - <rhs expression> <= 0 for t in T), name="<name>")
         # Pattern for a single constraint (dual returned as a scalar):
         #   self.con["<name>"] = m.addConstr(<lhs expression> - <rhs expression> <= 0, name="<name>")
+
+
+        # Hourly power balance:
+        # consumption + exports = grid imports + PV generation
+        self.con["balance"] = m.addConstrs(
+            (load[t] + exp[t] == imp[t] + pv[t] for t in T),
+            name="balance",
+        )
+
+        # Load bounds
+        self.con["load_min"] = m.addConstrs(
+            (load[t] >= d.load_min_kWh for t in T),
+            name="load_min",
+        )
+
+        self.con["load_max"] = m.addConstrs(
+            (load[t] <= d.load_max_kWh for t in T),
+            name="load_max",
+        )
+
+        # PV bounds
+        self.con["pv_min"] = m.addConstrs(
+            (pv[t] >= 0 for t in T),
+            name="pv_min",
+        )
+
+        self.con["pv_max"] = m.addConstrs(
+            (pv[t] <= d.pv_available[t] for t in T),
+            name="pv_max",
+        )
 
         m.update()
         return self
@@ -144,8 +217,15 @@ class FlexibleConsumerModel:
     # --------------------------------------------------------------- extraction
     def _extract_results(self, status: str) -> Results:
         d, T = self.data, list(self.T)
+
+        # Effective grid prices
+        p_import = d.energy_price + d.import_tariff
+        p_export = d.energy_price - d.export_tariff
+
         hourly = pd.DataFrame(index=pd.Index(T, name="hour"))
         hourly["price"] = d.energy_price
+        hourly["p_import"] = p_import
+        hourly["p_export"] = p_export
         hourly["pv_available"] = d.pv_available
         if d.reference_load is not None:
             hourly["reference_load"] = d.reference_load
@@ -155,6 +235,51 @@ class FlexibleConsumerModel:
             if isinstance(v, gp.tupledict):
                 hourly[name] = [v[t].X for t in T]
         scalars = {name: v.X for name, v in self.var.items() if isinstance(v, gp.Var)}
+        
+        # Price-ladder regime
+        if d.consumption_utility is not None:
+            u = d.consumption_utility
+            tol = 1e-8
+            regimes = []
+
+            for t in T:
+                if u > p_import[t] + tol:
+                    regime = "upper_load"
+                elif u < p_export[t] - tol:
+                    regime = "lower_load"
+                elif abs(u - p_import[t]) <= tol:
+                    regime = "tie_import"
+                elif abs(u - p_export[t]) <= tol:
+                    regime = "tie_export"
+                else:
+                    regime = "middle"
+
+                regimes.append(regime)
+
+            hourly["regime"] = regimes
+
+        # Question 1 economic metrics
+        metrics = {}
+
+        if d.consumption_utility is not None:
+           
+            utility = sum(
+                d.consumption_utility * self.var["load"][t].X
+                for t in T
+            )
+
+            procurement_cost = sum(
+                p_import[t] * self.var["import"][t].X
+                + d.pv_marginal_cost * self.var["pv"][t].X
+                - p_export[t] * self.var["export"][t].X
+                for t in T
+            )
+
+            metrics["utility"] = utility
+            metrics["procurement_cost"] = procurement_cost
+            metrics["net_utility"] = utility - procurement_cost
+
+            assert abs(metrics["net_utility"] - self.m.ObjVal) < 1e-6
 
         # Dual values: every constraint family in self.con becomes a 'dual_<name>' column or scalar
         duals: dict[str, float] = {}
@@ -174,7 +299,8 @@ class FlexibleConsumerModel:
             objective=self.m.ObjVal,
             hourly=hourly,
             duals=duals,
-            meta={"scalar_variables": scalars},
+            meta={"scalar_variables": scalars, **metrics,
+            },
         )
 
 
