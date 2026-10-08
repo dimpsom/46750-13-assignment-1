@@ -6,10 +6,10 @@ from gurobipy import GRB
 from .model import FlexibleConsumerModel
 
 
-class Question3Model(FlexibleConsumerModel):
+class Question3BatteryModel(FlexibleConsumerModel):
     """Question 3: quadratic disutility + minimum daily energy requirement."""
 
-    def build(self) -> "Question3Model":
+    def build(self) -> "Question3BatteryModel":
         d, m, T = self.data, self.m, self.T
 
         # Check that the required Q3 data are available
@@ -52,6 +52,23 @@ class Question3Model(FlexibleConsumerModel):
         load = self.var["load"]
         pv = self.var["pv"]
 
+        # NEW Battery related variables
+        self.var["charge"] = m.addVars(
+            T, lb=0, ub=d.battery_max_charge_kW, vtype=GRB.CONTINUOUS, name="charge"
+        )
+
+        self.var["discharge"] = m.addVars(
+            T, lb=0, ub=d.battery_max_discharge_kW, vtype=GRB.CONTINUOUS, name="discharge"
+        )
+
+        self.var["soc"] = m.addVars(
+            range(len(T)+1), lb=0, ub=d.battery_capacity_kWh, vtype=GRB.CONTINUOUS, name="soc"
+        )
+
+        ch = self.var["charge"]
+        dis = self.var["discharge"]
+        soc = self.var["soc"]
+
         # ---------------------------------------------------------------
         # Objective: Question 2(c) quadratic disutility
         # ---------------------------------------------------------------
@@ -75,7 +92,7 @@ class Question3Model(FlexibleConsumerModel):
         # Hourly power balance
         self.con["balance"] = m.addConstrs(
             (
-                load[t] + exp[t] == imp[t] + pv[t]
+                load[t] + exp[t] + ch[t] == imp[t] + pv[t] + dis[t]
                 for t in T
             ),
             name="balance",
@@ -111,5 +128,20 @@ class Question3Model(FlexibleConsumerModel):
             name="minimum_daily_energy",
         )
 
+        # NEW constraints for battery state of charge "soc"
+        # Sate of charge for each timestep (hour)
+        self.con["soc_balance"] = m.addConstrs(
+            (
+                soc[t+1] == soc[t] + d.battery_charging_efficiency * ch[t] - dis[t] / d.battery_discharging_efficiency
+            for t in T
+            ),
+            name = "soc_balance",
+        )
+
+        # Initial and final states of charge
+        self.con["soc_initial"] = m.addConstr(
+            soc[0] == d.battery_initial_soc_kWh,
+            name="soc_initial",
+        )
         
         return self

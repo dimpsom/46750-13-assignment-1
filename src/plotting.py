@@ -56,6 +56,12 @@ def plot_schedule(results: Results, data: InputData, save_to: Path | str | None 
         ax.bar(h, hr["load"], width, color="C0", alpha=0.7, label="load")
     if "pv" in hr:
         ax.bar(h, -hr["pv"], width, color="orange", alpha=0.7, label="PV used (negative = generation)")
+    if "charge" in hr:
+        ax.plot(h, hr["charge"], color="green",
+            marker="o", linestyle="--", label="battery charge")
+    if "discharge" in hr:
+        ax.plot(h, -hr["discharge"], color="purple",
+            marker="o", linestyle="--", label="battery discharge")
     if "pv_available" in hr and "pv" in hr:
         ax.step(h, -hr["pv_available"], where="mid", color="orange", ls="--", lw=1, label="PV available")
     if "import" in hr and "export" in hr:
@@ -106,4 +112,24 @@ def plot_scenario_comparison(
     ax.bar(names, values, color="C0")
     ax.set(ylabel=ylabel, title=f"Scenario comparison - {metric}")
     ax.tick_params(axis="x", rotation=20)
+    return _finish(fig, save_to)
+
+def plot_battery_soc(results, save_to=None):
+    hr = results.hourly
+
+    if "soc" not in hr:
+        raise ValueError("SOC not found in hourly results")
+
+    fig, ax = plt.subplots(figsize=(11, 3.5))
+
+    ax.step(hr.index, hr["soc"], where="post",
+            color="green", linewidth=2, label="Battery SOC")
+
+    ax.set(
+        xlabel="hour",
+        ylabel="Energy [kWh]",
+        title="Battery state of charge"
+    )
+
+    ax.legend()
     return _finish(fig, save_to)

@@ -22,6 +22,7 @@ from src.model import FlexibleConsumerModel, Results
 from src.model_linear import LinearDisutilityModel, find_breakpoints, plot_c_L_sweep, sweep_c_L
 from src.model_quadratic import QuadraticDisutilityModel, check_thresholds, plot_c_Q_sweep, sweep_c_Q
 from src.model_q3 import Question3Model
+from src.model_q3_battery import Question3BatteryModel
 from src.plotting import plot_duals, plot_inputs, plot_scenario_comparison, plot_schedule
 from src.scenarios import scale_prices, scale_pv, set_tariffs
 
@@ -34,9 +35,8 @@ def run_base_case(question: str, out: Path, show: bool) -> Results | None:
     plot_inputs(data, save_to=out / "inputs.png")
 
     if question == "Q3_battery":
-        print("[skipped] The battery model (Q3.7) is not implemented yet.")
-        return None
-    if question == "Q3":
+        model = Question3BatteryModel(data).build()
+    elif question == "Q3":
         model = Question3Model(data).build()
     else:
         model = FlexibleConsumerModel(data).build()
