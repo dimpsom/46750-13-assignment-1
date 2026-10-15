@@ -143,5 +143,10 @@ class Question3BatteryModel(FlexibleConsumerModel):
             soc[0] == d.battery_initial_soc_kWh,
             name="soc_initial",
         )
+
+        self.con["soc_final"] = m.addConstr(
+            soc[len(T)] == soc[0],
+            name="soc_final",
+        )
         
         return self

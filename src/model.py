@@ -235,7 +235,16 @@ class FlexibleConsumerModel:
             if isinstance(v, gp.tupledict):
                 hourly[name] = [v[t].X for t in T]
         scalars = {name: v.X for name, v in self.var.items() if isinstance(v, gp.Var)}
-        
+
+        # Store the complete battery SOC trajectory, including the final hour
+        if "soc" in self.var:
+            soc_values = [
+                self.var["soc"][t].X
+                for t in range(len(T) + 1)
+            ]
+        else:
+            soc_values = None
+                
         # Price-ladder regime
         if d.consumption_utility is not None:
             u = d.consumption_utility
@@ -299,7 +308,7 @@ class FlexibleConsumerModel:
             objective=self.m.ObjVal,
             hourly=hourly,
             duals=duals,
-            meta={"scalar_variables": scalars, **metrics,
+            meta={"scalar_variables": scalars, "soc_values": soc_values, **metrics
             },
         )
 

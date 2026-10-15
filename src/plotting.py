@@ -75,8 +75,22 @@ def plot_schedule(results: Results, data: InputData, save_to: Path | str | None 
     ax2.step(h, hr["price"], where="mid", color="C3", lw=1.2, label="energy price")
     ax2.set_ylabel("DKK/kWh", color="C3")
 
+        # Battery SOC: only for models with a battery
+    if "soc" in hr:
+        ax3 = ax.twinx()
+        ax3.spines["right"].set_position(("outward", 50))
+        soc = results.meta["soc_values"]
+        ax3.plot(np.arange(len(soc)), soc, color="darkgreen", label="SOC")
+        ax3.set_ylabel("SOC [kWh]", color="darkgreen")
+
     lines, labels = ax.get_legend_handles_labels()
     l2, lb2 = ax2.get_legend_handles_labels()
+
+    if "soc" in hr:
+        l3, lb3 = ax3.get_legend_handles_labels()
+        lines += l3
+        labels += lb3
+
     ax.legend(lines + l2, labels + lb2, fontsize=8, ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.18))
     return _finish(fig, save_to)
 
@@ -112,24 +126,4 @@ def plot_scenario_comparison(
     ax.bar(names, values, color="C0")
     ax.set(ylabel=ylabel, title=f"Scenario comparison - {metric}")
     ax.tick_params(axis="x", rotation=20)
-    return _finish(fig, save_to)
-
-def plot_battery_soc(results, save_to=None):
-    hr = results.hourly
-
-    if "soc" not in hr:
-        raise ValueError("SOC not found in hourly results")
-
-    fig, ax = plt.subplots(figsize=(11, 3.5))
-
-    ax.step(hr.index, hr["soc"], where="post",
-            color="green", linewidth=2, label="Battery SOC")
-
-    ax.set(
-        xlabel="hour",
-        ylabel="Energy [kWh]",
-        title="Battery state of charge"
-    )
-
-    ax.legend()
     return _finish(fig, save_to)
